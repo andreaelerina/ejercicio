@@ -1,492 +1,587 @@
-/*****************************************************************************
- *  DASHBOARD 2 · MONITOREO DE AMENAZAS AL PATRIMONIO ARQUEOLÓGICO
- *  ---------------------------------------------------------------------------
- *  EJERCICIO DE CLASE  · Ingeniería Computacional
- *  Especialización en Sistemas de Información Geográfica
- *  Autor: Andrea Serna
- *  Plataforma: Google Earth Engine (Code Editor → Apps)
- *  ---------------------------------------------------------------------------
- *  OBJETIVO
- *  Sistema de alertas sobre áreas arqueológicas protegidas frente a:
- *    1. Deforestación          (Hansen GFC + alertas RADD / GLAD-L)
- *    2. Cambios en la cobertura detectados con radar (Sentinel-1, atraviesa nubes)
- *    3. Minería aluvial ilegal (MapBiomas Colombia, clase 30)
- *    4. Expansión urbana       (MapBiomas Colombia, clase 24)
- *    5. Vías                   (GRIP4, opcional)
- *
- *  SITIOS PILOTO: San Agustín, Tierradentro, Teyuna–Ciudad Perdida, Chiribiquete.
- *
- *  MÉTODO (didáctico, 5 pasos)
- *    Paso 1  Configuración: datasets, sitios y escalas de color.
- *    Paso 2  Funciones de análisis: una capa binaria (0/1) por cada amenaza.
- *    Paso 3  Índice de presión = suma de amenazas coincidentes (0–5).
- *    Paso 4  Estadísticas por sitio (ha, %) y semáforo de alerta.
- *    Paso 5  Interfaz (UI): panel, mapa, leyendas, gráficos y reporte.
- *
- *  AVISOS
- *   • Los sitios se definen como círculos (buffer) alrededor de coordenadas
- *     aproximadas. Para uso institucional, reemplácelos por los polígonos
- *     oficiales (RUNAP / ICANH / Parques Nacionales) subidos como Asset.
- *   • Verifique en el Catálogo de GEE las rutas de los assets de CONFIG: las
- *     versiones se actualizan (Hansen, MapBiomas, RADD).
- *   • Es una herramienta de ALERTA TEMPRANA: toda alerta debe verificarse con
- *     imágenes de alta resolución y trabajo de campo antes de actuar.
- *****************************************************************************/
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Amenazas al patrimonio arqueológico — Colombia</title>
+<!--
+  DASHBOARD 2 · MONITOREO DE AMENAZAS AL PATRIMONIO ARQUEOLÓGICO
+  EJERCICIO DE CLASE · Ingeniería Computacional
+  Especialización en Sistemas de Información Geográfica
+  Autor: Andrea Serna
+  Publicación: GitHub Pages (el archivo debe llamarse index.html, en minúscula)
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+:root{
+  --marron:#6B2A14; --marron-osc:#3E160A; --tinta:#2A1F19; --tinta-2:#5E4F44; --tinta-3:#9A8B7F;
+  --fondo:#F7F2EA; --panel:#FFFFFF; --linea:#E2D7C8;
+  --acento:#1F6F78;
+  --alto:#D73027; --medio:#F5A34A; --bajo:#2E9E5B;
+  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--fondo);color:var(--tinta);font-family:"Source Sans 3","Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.45}
+h1,h2,h3{margin:0;font-weight:700;line-height:1.15}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--acento);outline-offset:2px}
 
+.cabecera{background:linear-gradient(115deg,var(--marron-osc),var(--marron) 60%,#9A4A22);color:#fff;padding:22px 28px 20px}
+.cabecera .fila{display:flex;flex-wrap:wrap;gap:18px 32px;align-items:flex-end;justify-content:space-between;max-width:1480px;margin:0 auto}
+.cabecera h1{font-size:clamp(22px,2.6vw,32px);letter-spacing:-.01em;max-width:32ch}
+.cabecera p{margin:6px 0 0;color:#F0DCCB;max-width:72ch}
+.tag{display:inline-block;margin-top:10px;background:rgba(255,255,255,.16);border-radius:6px;padding:5px 10px;font-size:.78rem;line-height:1.5}
+.controles{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:flex-end}
+.controles label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:#F0DCCB}
+.conmutador{display:inline-flex;border:1px solid rgba(255,255,255,.5);border-radius:6px;overflow:hidden}
+.conmutador button{background:transparent;border:0;color:#fff;padding:6px 12px;cursor:pointer}
+.conmutador button[aria-pressed="true"]{background:#fff;color:var(--marron);font-weight:600}
+select{font:inherit;padding:6px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.5);background:#fff;color:var(--tinta);min-width:190px}
+.btn{background:#fff;color:var(--marron);border:1px solid #fff;border-radius:6px;padding:7px 14px;font-weight:600;cursor:pointer;display:inline-block}
+.btn:hover{background:#F3E6D8}
+.btn[disabled]{opacity:.7;cursor:progress}
+.btn.sec{background:transparent;color:#fff;border-color:rgba(255,255,255,.6)}
+.btn.sec:hover{background:rgba(255,255,255,.14)}
 
-// ============================== PASO 1 · CONFIGURACIÓN ======================
-var CONFIG = {
-  HANSEN:    'UMD/hansen/global_forest_change_2023_v1_11', // actualizar si hay versión nueva
-  S1:        'COPERNICUS/S1_GRD',
-  RADD:      'projects/radar-wur/raddalert/v1',
-  GLAD:      'projects/glad/alert/UpdResult',
-  MAPBIOMAS: 'projects/mapbiomas-public/assets/colombia/collection1/mapbiomas_colombia_collection1_integration_v1',
-  MB_ANIO:   2022,                                          // año de la clasificación MapBiomas
-  VIAS:      'projects/sat-io/open-datasets/GRIP4/South-America',
-  DIAS_VENTANA: 90                                          // ventana de análisis por defecto
+.banner{background:#FFF3CD;border-bottom:1px solid #ECD48A;color:#6B5400;padding:8px 28px;font-size:.86rem}
+
+main{max-width:1480px;margin:0 auto;padding:18px 28px 36px;display:grid;gap:18px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
+.kpi{background:var(--panel);border-left:4px solid var(--marron);padding:12px 16px}
+.kpi .valor{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1.1;color:var(--marron-osc)}
+.kpi .valor small{font-size:15px;font-weight:600;color:var(--tinta-2);margin-left:4px}
+.kpi .etiqueta{color:var(--tinta-2);font-size:14px;margin-top:2px}
+
+.panel{background:var(--panel);border:1px solid var(--linea);padding:14px 16px 16px;min-width:0}
+.panel h2{font-size:17px;color:var(--marron-osc)}
+.panel .sub{color:var(--tinta-2);font-size:13.5px;margin:2px 0 10px}
+
+.zona-mapa{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:18px}
+.zona-mapa>.panel:first-child{display:flex;flex-direction:column}
+.zona-mapa>.panel:first-child>div.mapawrap{flex:1;min-height:560px;position:relative}
+#mapa{height:100%;min-height:560px;width:100%;background:#EDE4D6}
+.leaflet-container{font:inherit}
+.leyenda{position:absolute;right:12px;bottom:12px;z-index:800;background:rgba(255,255,255,.95);border:1px solid var(--linea);padding:8px 10px;font-size:12.5px;line-height:1.3;min-width:160px}
+.leyenda .titulo{font-weight:600;margin-bottom:4px}
+.leyenda .cuadro{display:inline-block;width:14px;height:14px;vertical-align:-2px;margin-right:6px;border:1px solid rgba(0,0,0,.15)}
+.leyenda div{margin:2px 0}
+.leaflet-popup-content{font-size:14px;margin:12px 14px}
+.leaflet-popup-content b{color:var(--marron-osc);font-size:15px}
+.leaflet-popup-content table{border-collapse:collapse;margin-top:6px}
+.leaflet-popup-content td{padding:1px 8px 1px 0;color:var(--tinta-2)}
+.leaflet-popup-content td+td{text-align:right;color:var(--tinta);font-weight:600}
+.leaflet-control-attribution{font-size:10px}
+.leaflet-control-layers{font:inherit;font-size:13px;border:1px solid var(--linea)!important;box-shadow:none!important}
+.sem{display:inline-block;color:#fff;font-weight:700;border-radius:5px;padding:2px 8px;font-size:.78rem}
+
+.graficos{display:grid;gap:18px;align-content:start}
+.grafico{position:relative;width:100%}
+.grafico canvas{width:100%!important}
+.fila2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+
+.tabla-panel .barra-sup{display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;align-items:center;margin-bottom:10px}
+.tabla-panel input[type=search]{font:inherit;padding:6px 10px;border:1px solid var(--linea);border-radius:6px;min-width:240px}
+.tabla-wrap{overflow-x:auto;max-height:520px;overflow-y:auto;border-top:1px solid var(--linea)}
+table.datos{width:100%;border-collapse:collapse;font-size:14px;min-width:860px}
+table.datos th,table.datos td{padding:7px 10px;border-bottom:1px solid var(--linea);text-align:left;white-space:nowrap}
+table.datos th{position:sticky;top:0;background:#fff;color:var(--tinta-2);font-weight:600;cursor:pointer;user-select:none;border-bottom:2px solid var(--linea)}
+table.datos th.num,table.datos td.num{text-align:right;font-variant-numeric:tabular-nums}
+table.datos th[aria-sort="descending"]::after{content:" ▾";color:var(--marron)}
+table.datos th[aria-sort="ascending"]::after{content:" ▴";color:var(--marron)}
+table.datos tbody tr{cursor:pointer}
+table.datos tbody tr:hover{background:#FAF4EA}
+table.datos tbody tr.activa{background:#F3E6D8}
+td.pos{color:var(--tinta-3);width:36px}
+
+.pie{color:var(--tinta-2);font-size:13px;max-width:110ch}
+.pie p{margin:4px 0}
+iframe{width:100%;height:620px;border:1px solid var(--linea)}
+
+@media print{
+  body{background:#fff}
+  .controles,.leaflet-control-zoom,.leaflet-control-layers{display:none!important}
+  .cabecera{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  main{padding:10px 0}
+  .zona-mapa{grid-template-columns:1fr}
+  .tabla-wrap{max-height:none;overflow:visible}
+  .panel,.kpi{break-inside:avoid}
+}
+@media (max-width:1000px){
+  .zona-mapa,.fila2{grid-template-columns:1fr}
+  #mapa{height:460px}
+}
+@media (max-width:640px){
+  .cabecera{padding:16px 16px 14px}
+  main{padding:14px 12px 28px}
+  #mapa{height:380px}
+  .kpi .valor{font-size:24px}
+  select,.tabla-panel input[type=search]{min-width:0;width:100%}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<header class="cabecera">
+  <div class="fila">
+    <div>
+      <h1>Amenazas al patrimonio arqueológico — Colombia</h1>
+      <p>Alertas sobre áreas arqueológicas protegidas y parques arqueológicos frente a deforestación, minería aluvial, expansión urbana y vías. Elija la métrica, la amenaza y el departamento para actualizar el mapa, los gráficos y la tabla.</p>
+      <span class="tag">EJERCICIO DE CLASE · Ingeniería Computacional<br>Especialización en Sistemas de Información Geográfica · Autor: Andrea Serna</span>
+    </div>
+    <div class="controles">
+      <label>Métrica
+        <span class="conmutador" role="group" aria-label="Métrica">
+          <button type="button" data-metrica="ai" aria-pressed="true">Hectáreas</button>
+          <button type="button" data-metrica="p" aria-pressed="false">% del área</button>
+        </span>
+      </label>
+      <label for="selAmen">Amenaza
+        <select id="selAmen"></select>
+      </label>
+      <label for="selDepto">Departamento
+        <select id="selDepto"><option value="">Todos los departamentos</option></select>
+      </label>
+      <button type="button" class="btn" id="btnPdf">Descargar PDF</button>
+      <label class="btn sec" style="flex-direction:row;color:#fff;cursor:pointer">Cargar datos (JSON)
+        <input type="file" id="fJson" accept=".json,application/json" hidden>
+      </label>
+    </div>
+  </div>
+</header>
+<div class="banner" id="banner"></div>
+
+<main>
+  <section class="kpis" aria-label="Indicadores generales">
+    <div class="kpi"><div class="valor" id="kN">—</div><div class="etiqueta">Sitios monitoreados</div></div>
+    <div class="kpi"><div class="valor" id="kAi">—</div><div class="etiqueta">Hectáreas con ≥1 amenaza</div></div>
+    <div class="kpi"><div class="valor" id="kP">—</div><div class="etiqueta">Porcentaje del territorio afectado</div></div>
+    <div class="kpi"><div class="valor" id="kAlto">—</div><div class="etiqueta">Sitios en alerta ALTA</div></div>
+    <div class="kpi"><div class="valor" id="kTop" style="font-size:22px">—</div><div class="etiqueta" id="kTopEt">Sitio más afectado</div></div>
+  </section>
+
+  <section class="zona-mapa">
+    <div class="panel">
+      <h2>Distribución espacial de la afectación</h2>
+      <p class="sub" id="subMapa"></p>
+      <div class="mapawrap">
+        <div id="mapa" role="region" aria-label="Mapa de sitios arqueológicos"></div>
+        <div class="leyenda" id="leyenda"></div>
+      </div>
+    </div>
+    <div class="graficos">
+      <div class="panel">
+        <h2>Afectación por sitio</h2>
+        <p class="sub" id="subSitios"></p>
+        <div class="grafico"><canvas id="gSitios"></canvas></div>
+      </div>
+      <div class="panel">
+        <h2>Composición por tipo de amenaza (ha)</h2>
+        <p class="sub">Cada barra suma las áreas detectadas por cada fuente; una misma zona puede estar en más de una amenaza.</p>
+        <div class="grafico"><canvas id="gComp"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="fila2">
+    <div class="panel">
+      <h2>Pérdida anual de bosque (Hansen, ha)</h2>
+      <p class="sub" id="subLoss"></p>
+      <div class="grafico"><canvas id="gLoss" height="230"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Alertas RADD · últimos 12 meses (ha)</h2>
+      <p class="sub" id="subAlert"></p>
+      <div class="grafico"><canvas id="gAlert" height="230"></canvas></div>
+    </div>
+  </section>
+
+  <section class="panel tabla-panel">
+    <div class="barra-sup">
+      <div>
+        <h2>Detalle por sitio</h2>
+        <p class="sub" id="subTabla" style="margin-bottom:0"></p>
+      </div>
+      <input type="search" id="buscar" placeholder="Buscar sitio o departamento" aria-label="Buscar sitio o departamento">
+    </div>
+    <div class="tabla-wrap">
+      <table class="datos" id="tabla">
+        <thead><tr>
+          <th data-k="pos">#</th>
+          <th data-k="nombre" aria-sort="none">Sitio</th>
+          <th data-k="depto" aria-sort="none">Departamento</th>
+          <th data-k="nivel" aria-sort="none">Nivel</th>
+          <th data-k="total" class="num" aria-sort="none">Área (ha)</th>
+          <th data-k="idx1" class="num" aria-sort="descending">≥1 amenaza (ha)</th>
+          <th data-k="pidx1" class="num" aria-sort="none">% afectado</th>
+          <th data-k="hansen" class="num" aria-sort="none">Hansen (ha)</th>
+          <th data-k="radd" class="num" aria-sort="none">RADD (ha)</th>
+          <th data-k="s1" class="num" aria-sort="none">S1 (ha)</th>
+          <th data-k="mineria" class="num" aria-sort="none">Minería (ha)</th>
+          <th data-k="urbano" class="num" aria-sort="none">Urbano (ha)</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel" id="geeCard" style="display:none">
+    <h2>App de Google Earth Engine (en vivo)</h2>
+    <p class="sub">Versión interactiva ejecutándose directamente en Earth Engine.</p>
+    <iframe id="geeFrame" title="GEE App"></iframe>
+  </section>
+
+  <footer class="pie">
+    <p>Fuentes de referencia: Hansen/UMD/Google/USGS/NASA (Global Forest Change) · alertas RADD (WUR) y GLAD (UMD) · Copernicus Sentinel-1 · MapBiomas Colombia. Los sitios se representan como círculos de coordenadas aproximadas; para uso institucional deben reemplazarse por los polígonos oficiales (RUNAP / ICANH / Parques Nacionales).</p>
+    <p>Elaborado por Andrea Serna · Ejercicio de clase de Ingeniería Computacional, Especialización en Sistemas de Información Geográfica. Herramienta de alerta temprana: toda alerta debe verificarse con imágenes de alta resolución y trabajo de campo.</p>
+  </footer>
+</main>
+
+<script>
+/* ===================== CONFIGURACIÓN ===================== */
+// Enlace de su GEE App publicada (opcional, aparece incrustada y en vivo)
+const GEE_APP_URL = '';
+const HANSEN_TILES = 'https://storage.googleapis.com/earthenginepartners-hansen/tiles/gfc_v1.11/loss_alpha/{z}/{x}/{y}.png';
+const SEMAFORO = { altoIdx2: 1, medioIdx1: 5 };            // % del área, igual que en el script de GEE
+const COLORES = ['#F6EBDD','#EBCFA9','#D9A66C','#C0763A','#8E4A1E','#4F2410'];  // escala secuencial (tierra)
+const PAL_HANSEN = ['#FFFFB2','#FED976','#FEB24C','#FD8D3C','#F03B20','#BD0026'];
+const COL_AMEN = {hansen:'#BD0026', radd:'#F5A34A', s1:'#2166AC', mineria:'#7B2D8E', urbano:'#5E4F44'};
+
+/* ===================== DATOS ===================== */
+/* DATOS DE EJEMPLO (ilustrativos, NO son mediciones reales).
+   Reemplácelos con los resultados exportados desde Earth Engine (mismo esquema)
+   o cargue un JSON con el botón "Cargar datos". Cada sitio puede traer, opcionalmente,
+   "geom" (GeoJSON Polygon/MultiPolygon) para dibujar el polígono oficial en vez del círculo. */
+const ANIOS = [2015,2016,2017,2018,2019,2020,2021,2022,2023];
+const serie = (b,t,o) => ANIOS.map((_,i)=>Math.round(b*(1+t*i)*(0.9+0.2*(((i*37+o)%10)/10))));
+const mensual = (b,o) => Array.from({length:12},(_,i)=>Math.max(0,Math.round(b*(0.7+0.6*(((i*53+o)%10)/10)))));
+
+let DATOS = {
+  ejemplo: true,
+  periodo: { ini:'2026-07-10', fin:'2026-10-10' },
+  anios: ANIOS,
+  sitios: [
+    {id:'sanagustin', nombre:'San Agustín', depto:'Huila', lat:1.886, lon:-76.284, radio:12000,
+     hansen:1100, radd:180, s1:700, mineria:60, urbano:420, idx1:2300, idx2:280, perdida:serie(120,.12,3), alertas:mensual(15,2)},
+    {id:'tierradentro', nombre:'Tierradentro', depto:'Cauca', lat:2.570, lon:-76.040, radio:10000,
+     hansen:700, radd:90, s1:420, mineria:90, urbano:380, idx1:1200, idx2:350, perdida:serie(90,.1,5), alertas:mensual(8,4)},
+    {id:'teyuna', nombre:'Teyuna–Ciudad Perdida', depto:'Magdalena', lat:11.038, lon:-73.925, radio:12000,
+     hansen:1600, radd:260, s1:900, mineria:5, urbano:30, idx1:2600, idx2:300, perdida:serie(180,.14,7), alertas:mensual(22,1)},
+    {id:'chiribiquete', nombre:'Chiribiquete (arte rupestre)', depto:'Caquetá', lat:0.200, lon:-72.700, radio:25000,
+     hansen:2400, radd:380, s1:1900, mineria:120, urbano:0, idx1:4200, idx2:150, perdida:serie(310,.1,9), alertas:mensual(32,6)},
+    {id:'facatativa', nombre:'Parque Arqueológico de Facatativá', depto:'Cundinamarca', lat:4.815, lon:-74.355, radio:4000,
+     hansen:40, radd:6, s1:30, mineria:15, urbano:520, idx1:540, idx2:70, perdida:serie(4,.05,2), alertas:mensual(1,3)},
+    {id:'infiernito', nombre:'El Infiernito (Villa de Leyva)', depto:'Boyacá', lat:5.620, lon:-73.545, radio:5000,
+     hansen:60, radd:8, s1:45, mineria:40, urbano:210, idx1:300, idx2:25, perdida:serie(6,.06,8), alertas:mensual(1,5)},
+    {id:'lindosa', nombre:'Serranía de La Lindosa (arte rupestre)', depto:'Guaviare', lat:2.550, lon:-72.750, radio:15000,
+     hansen:2100, radd:410, s1:1500, mineria:10, urbano:20, idx1:3600, idx2:520, perdida:serie(220,.13,1), alertas:mensual(28,7)},
+    {id:'tayrona', nombre:'Tayrona – Pueblito (Chairama)', depto:'Magdalena', lat:11.320, lon:-74.040, radio:10000,
+     hansen:380, radd:50, s1:260, mineria:0, urbano:150, idx1:640, idx2:45, perdida:serie(40,.08,4), alertas:mensual(5,8)}
+  ]
 };
 
-// Sitios piloto: coordenadas APROXIMADAS (lon, lat) y radio de análisis (m)
-var SITIOS = {
-  'San Agustín (Huila)':                {lon: -76.284, lat:  1.886, radio: 12000},
-  'Tierradentro (Cauca)':               {lon: -76.040, lat:  2.570, radio: 10000},
-  'Teyuna–Ciudad Perdida (Magdalena)':  {lon: -73.925, lat: 11.038, radio: 12000},
-  'Chiribiquete – arte rupestre':       {lon: -72.700, lat:  0.200, radio: 25000}
-};
+/* ===================== UTILIDADES ===================== */
+const fmt  = new Intl.NumberFormat('es-CO',{maximumFractionDigits:0});
+const fmt1 = new Intl.NumberFormat('es-CO',{minimumFractionDigits:1,maximumFractionDigits:1});
+const fmt2 = new Intl.NumberFormat('es-CO',{minimumFractionDigits:2,maximumFractionDigits:2});
+const $ = id => document.getElementById(id);
+const AMEN = {idx1:'Área con ≥1 amenaza', hansen:'Pérdida de bosque (Hansen)', radd:'Alertas RADD',
+              s1:'Caída radar Sentinel-1', mineria:'Minería (MapBiomas)', urbano:'Expansión urbana (MapBiomas)'};
+const ETQ = {ai:'Hectáreas', p:'% del área del sitio'};
 
-// Escalas de color (paletas) ------------------------------------------------
-var PAL = {
-  // Año de pérdida Hansen: amarillo (antiguo) → rojo oscuro (reciente)
-  hansen: ['FFFFB2', 'FED976', 'FEB24C', 'FD8D3C', 'F03B20', 'BD0026'],
-  // Fecha de alerta RADD: amarillo (inicio de ventana) → naranja oscuro (reciente)
-  radd:   ['FEE391', 'FE9929', 'CC4C02'],
-  // Cambio Sentinel-1 VH (dB): rojo = baja retrodispersión (posible pérdida),
-  // azul = aumento (posible construcción / suelo expuesto rugoso)
-  s1:     ['B2182B', 'EF8A62', 'FDDBC7', 'F7F7F7', 'D1E5F0', '67A9CF', '2166AC'],
-  // Índice de presión 1–5: de amarillo claro a granate
-  indice: ['FFFFB2', 'FECC5C', 'FD8D3C', 'F03B20', 'BD0026'],
-  glad:   ['FF00FF'],
-  vias:   ['FFFFFF']
-};
+let metrica='ai', amen='idx1', depto='', seleccion=null, orden={k:'idx1',asc:false}, filtro='';
+const SITIOS = () => DATOS.sitios;
+const pctDe = (s,campo) => 100*s[campo]/s.total;
+const val = s => metrica==='ai' ? s[amen] : pctDe(s,amen);
+const fmtMet = v => metrica==='ai' ? fmt.format(v)+' ha' : fmt2.format(v)+' %';
+const visibles = () => depto ? SITIOS().filter(s=>s.depto===depto) : SITIOS().slice();
+const normal = t => t.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 
-// Clases MapBiomas Colombia (id, nombre, color)
-var MB = {
-  ids:     [3, 4, 5, 6, 11, 12, 13, 15, 18, 21, 24, 25, 30, 33],
-  nombres: ['Formación forestal', 'Formación sabánica', 'Manglar', 'Bosque inundable',
-            'Humedal', 'Formación herbácea', 'Otra formación no forestal', 'Pasto',
-            'Agricultura', 'Mosaico agropecuario', 'Infraestructura urbana',
-            'Otra área sin vegetación', 'Minería', 'Río, lago u océano'],
-  colores: ['1F8D49', '7DC975', '04381D', '026975', '519799', 'D6BC74', 'D89F5C',
-            'FFD966', 'E974ED', 'FFEFC3', 'D4271E', 'DB4D4F', '9C0027', '0000FF']
-};
-
-// Umbrales del semáforo (porcentaje del área del sitio)
-var SEMAFORO = {
-  altoIdx2:  1,   // % del área con ≥2 amenazas coincidentes  → ALTO
-  medioIdx1: 5    // % del área con ≥1 amenaza               → MEDIO
-};
-
-// Datasets base --------------------------------------------------------------
-var gfc       = ee.Image(CONFIG.HANSEN);
-var tc2000    = gfc.select('treecover2000');
-var lossyear  = gfc.select('lossyear');
-
-// RADD: última imagen de alertas para Sudamérica ('sa'); bandas: Alert, Date (YYDOY)
-var radd = ee.Image(
-  ee.ImageCollection(CONFIG.RADD)
-    .filterMetadata('layer', 'contains', 'alert')
-    .filterMetadata('geography', 'equals', 'sa')
-    .sort('system:time_end', false)
-    .first());
-
-
-// ============================== PASO 2 · FUNCIONES DE ANÁLISIS ==============
-// --- Utilidades de fecha (cliente) ---
-function fmtFecha(d) { return d.toISOString().slice(0, 10); }
-
-// Convierte 'YYYY-MM-DD' a código YYDOY (formato de la banda Date de RADD)
-function codigoYYDOY(txt) {
-  var d = new Date(txt + 'T00:00:00Z');
-  var y = d.getUTCFullYear();
-  var doy = Math.floor((d.getTime() - Date.UTC(y, 0, 1)) / 86400000) + 1;
-  return (y - 2000) * 1000 + doy;
+function nivel(s){
+  const p1 = pctDe(s,'idx1'), p2 = pctDe(s,'idx2');
+  if (p2 > SEMAFORO.altoIdx2)  return {txt:'ALTO',  color:'var(--alto)'};
+  if (p1 > SEMAFORO.medioIdx1) return {txt:'MEDIO', color:'var(--medio)'};
+  return {txt:'BAJO', color:'var(--bajo)'};
 }
-
-// Crea el feature (círculo) de un sitio
-function feat(nombre) {
-  var s = SITIOS[nombre];
-  return ee.Feature(ee.Geometry.Point([s.lon, s.lat]).buffer(s.radio), {sitio: nombre});
-}
-
-// Colección Sentinel-1 (IW, VH) filtrada al área
-function coleccionS1(geom) {
-  return ee.ImageCollection(CONFIG.S1)
-    .filterBounds(geom)
-    .filter(ee.Filter.eq('instrumentMode', 'IW'))
-    .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
-    .select('VH');
-}
-
-// Cambio de retrodispersión VH (dB): periodo reciente MENOS misma época del año anterior
-// (comparar la misma época reduce el efecto de la estacionalidad).
-function s1Cambio(geom, ini, fin) {
-  var col = coleccionS1(geom);
-  var reciente = col.filterDate(ini, fin).median();
-  var base = col.filterDate(ee.Date(ini).advance(-1, 'year'),
-                            ee.Date(fin).advance(-1, 'year')).median();
-  return reciente.subtract(base).focalMedian(30, 'circle', 'meters').rename('dVH');
-}
-
-// Capa GLAD-L (alertas Landsat) del año de la fecha final; conf ≥2 = probable/confirmada
-function gladCapa(p) {
-  var yy = ('' + p.fin).slice(2, 4);
-  var g = ee.ImageCollection(CONFIG.GLAD).mosaic();
-  var existe = g.bandNames().contains('conf' + yy);
-  return ee.Image(ee.Algorithms.If(existe,
-    g.select('conf' + yy).gte(2).selfMask().rename('glad'),
-    ee.Image(0).selfMask().rename('glad')));
-}
-
-// Capas binarias de amenaza + índice de presión
-function capas(geom, p) {
-  var bosque = tc2000.gte(p.tc);
-
-  // 1. Deforestación Hansen (pérdida desde el año elegido, sobre bosque base)
-  var hansenR = lossyear.gte(p.anio - 2000).and(bosque).selfMask().rename('hansen');
-
-  // 2. Alertas RADD dentro de la ventana de análisis
-  var fechaR = radd.select('Date');
-  var raddR = radd.select('Alert').gte(1)
-    .and(fechaR.gte(codigoYYDOY(p.ini)))
-    .and(fechaR.lte(codigoYYDOY(p.fin)))
-    .selfMask().rename('radd');
-
-  // 3. Cambio radar Sentinel-1 (caída de VH sobre bosque)
-  var dif = s1Cambio(geom, p.ini, p.fin);
-  var s1R = dif.lt(-p.umbral).and(bosque).selfMask().rename('s1');
-
-  // 4. MapBiomas: minería (30) y urbano (24)
-  var mb = ee.Image(CONFIG.MAPBIOMAS).select('classification_' + CONFIG.MB_ANIO);
-  var minR  = mb.eq(30).selfMask().rename('mineria');
-  var urbR  = mb.eq(24).selfMask().rename('urbano');
-
-  // PASO 3 · Índice de presión: nº de amenazas coincidentes (0–5)
-  var idx = hansenR.unmask(0, false)
-    .add(raddR.unmask(0, false))
-    .add(s1R.unmask(0, false))
-    .add(minR.unmask(0, false))
-    .add(urbR.unmask(0, false))
-    .rename('indice');
-
-  return {hansen: hansenR, radd: raddR, dif: dif, s1: s1R, mb: mb,
-          mineria: minR, urbano: urbR, idx: idx};
-}
-
-
-// ============================== PASO 4 · ESTADÍSTICAS =======================
-// Área (ha) de cada amenaza dentro del sitio
-function statsSitio(f, p) {
-  var geom = f.geometry();
-  var L = capas(geom, p);
-  var ha = ee.Image.pixelArea().divide(10000);
-  var img = ee.Image.cat([
-    ha.rename('total'),
-    ha.updateMask(L.hansen).rename('hansen'),
-    ha.updateMask(L.radd).rename('radd'),
-    ha.updateMask(L.s1).rename('s1'),
-    ha.updateMask(L.mineria).rename('mineria'),
-    ha.updateMask(L.urbano).rename('urbano'),
-    ha.updateMask(L.idx.gte(1)).rename('idx1'),
-    ha.updateMask(L.idx.gte(2)).rename('idx2')
-  ]);
-  var s = img.reduceRegion({
-    reducer: ee.Reducer.sum(), geometry: geom, scale: 30,
-    maxPixels: 1e10, bestEffort: true
+function prepararDatos(){
+  DATOS.sitios.forEach(s=>{
+    if (!s.total) s.total = Math.round(Math.PI*s.radio*s.radio/10000);
+    s.perdida = s.perdida || ANIOS.map(()=>0);
+    s.alertas = s.alertas || Array(12).fill(0);
   });
-  return f.set(s);
 }
 
-// Semáforo de alerta a partir de los porcentajes
-function nivelAlerta(d) {
-  var p1 = 100 * d.idx1 / d.total;
-  var p2 = 100 * d.idx2 / d.total;
-  if (p2 > SEMAFORO.altoIdx2)  { return {txt: 'ALTO',  color: '#d73027'}; }
-  if (p1 > SEMAFORO.medioIdx1) { return {txt: 'MEDIO', color: '#fdae61'}; }
-  return {txt: 'BAJO', color: '#1a9850'};
+/* Umbrales dinámicos: fracciones del máximo (para que la escala siempre use todo el rango) */
+function umbrales(){
+  const mx = Math.max(...SITIOS().map(val), 0.0001);
+  return [0.05,0.15,0.3,0.55,0.8].map(q=>q*mx);
 }
+function color(v){ const u=umbrales(); let i=0; while(i<u.length && v>u[i]) i++; return COLORES[i]; }
 
-// Gráfico: pérdida anual de bosque Hansen (ha) en el sitio
-function graficoHansen(geom, p) {
-  var img = ee.Image.pixelArea().divide(10000)
-    .updateMask(tc2000.gte(p.tc))
-    .addBands(lossyear.updateMask(lossyear.gt(0)));
-  var g = img.reduceRegion({
-    reducer: ee.Reducer.sum().group({groupField: 1, groupName: 'anio'}),
-    geometry: geom, scale: 30, maxPixels: 1e10, bestEffort: true
-  });
-  var fc = ee.FeatureCollection(ee.List(g.get('groups')).map(function (d) {
-    d = ee.Dictionary(d);
-    return ee.Feature(null, {anio: ee.Number(d.get('anio')).add(2000).format('%d'),
-                             ha: d.get('sum')});
-  }));
-  return ui.Chart.feature.byFeature(fc, 'anio', 'ha')
-    .setChartType('ColumnChart')
-    .setOptions({title: 'Pérdida anual de bosque (Hansen, ha)', legend: {position: 'none'},
-                 colors: ['BD0026'], hAxis: {title: 'Año'}, vAxis: {title: 'ha'}});
+/* ===================== MAPA ===================== */
+const mapa = L.map('mapa',{zoomSnap:.5});
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  {attribution:'Tiles &copy; Esri — Maxar, Earthstar Geographics, GIS User Community',maxZoom:19,crossOrigin:'anonymous'}).addTo(mapa);
+const hansen = L.tileLayer(HANSEN_TILES,{attribution:'Hansen/UMD/Google/USGS/NASA',maxNativeZoom:12,maxZoom:19,opacity:.85});
+const etiquetas = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+  {maxZoom:19,pane:'shadowPane',crossOrigin:'anonymous'}).addTo(mapa);
+const grupoSitios = L.featureGroup().addTo(mapa);
+L.control.layers(null,{'Nombres de lugares':etiquetas,'Sitios monitoreados':grupoSitios,'Pérdida de bosque Hansen 2001–2023':hansen},{collapsed:true,position:'topright'}).addTo(mapa);
+mapa.setView([5.5,-74.5],5.5);
+
+let formas = {};
+function estiloSitio(s){
+  const vis = !depto || s.depto===depto;
+  return { fillColor:color(val(s)), fillOpacity: vis ? .8 : .12,
+           color: seleccion===s.id ? '#1F6F78' : '#FFFFFF', weight: seleccion===s.id ? 3.5 : 1.5, opacity: vis ? 1 : .4 };
 }
-
-// Gráfico: serie de retrodispersión VH (dB) de los últimos 24 meses
-function graficoS1(geom, p) {
-  var col = coleccionS1(geom)
-    .filterDate(ee.Date(p.fin).advance(-24, 'month'), p.fin);
-  return ui.Chart.image.series(col, geom, ee.Reducer.mean(), 200)
-    .setOptions({title: 'Sentinel-1 VH (dB) – media del área, últimos 24 meses',
-                 vAxis: {title: 'dB'}, lineWidth: 1, pointSize: 2,
-                 colors: ['2166AC'], legend: {position: 'none'}});
+function popup(s){
+  const n = nivel(s);
+  return `<b>${s.nombre}</b><br><span style="color:#5E4F44">${s.depto}</span>
+    <div style="margin:6px 0"><span class="sem" style="background:${n.color}">ALERTA ${n.txt}</span></div>
+    <table><tr><td>Área analizada</td><td>${fmt.format(s.total)} ha</td></tr>
+    <tr><td>≥1 amenaza</td><td>${fmt.format(s.idx1)} ha (${fmt2.format(pctDe(s,'idx1'))} %)</td></tr>
+    <tr><td>≥2 amenazas</td><td>${fmt.format(s.idx2)} ha (${fmt2.format(pctDe(s,'idx2'))} %)</td></tr>
+    <tr><td>Pérdida Hansen</td><td>${fmt.format(s.hansen)} ha</td></tr>
+    <tr><td>Alertas RADD</td><td>${fmt.format(s.radd)} ha</td></tr>
+    <tr><td>Caída Sentinel-1</td><td>${fmt.format(s.s1)} ha</td></tr>
+    <tr><td>Minería</td><td>${fmt.format(s.mineria)} ha</td></tr>
+    <tr><td>Urbano</td><td>${fmt.format(s.urbano)} ha</td></tr></table>`;
 }
-
-// Exportación periódica (solo funciona desde el Code Editor, no en la App publicada)
-// Ejecute  exportarCSV()  en la consola cada mes y lance la tarea en la pestaña Tasks.
-function exportarCSV() {
-  var p = params();
-  var fc = ee.FeatureCollection(Object.keys(SITIOS).map(function (n) {
-    return statsSitio(feat(n), p).set({ini: p.ini, fin: p.fin});
-  }));
-  Export.table.toDrive({
-    collection: fc,
-    description: 'Reporte_amenazas_patrimonio_' + p.fin,
-    fileFormat: 'CSV'
+function construirMapa(){
+  grupoSitios.clearLayers(); formas = {};
+  SITIOS().forEach(s=>{
+    const forma = s.geom ? L.geoJSON(s.geom,{style:()=>estiloSitio(s)})
+                         : L.circle([s.lat,s.lon],{radius:s.radio,...estiloSitio(s)});
+    forma.bindPopup(()=>popup(s)).bindTooltip(s.nombre,{sticky:true});
+    forma.on('click',()=>seleccionar(s.id,false));
+    forma.addTo(grupoSitios);
+    // Marcador pequeño para que sitios chicos sean visibles a escala nacional
+    const pt = L.circleMarker([s.lat,s.lon],{radius:5,color:'#fff',weight:1.5,fillColor:'#1F6F78',fillOpacity:1}).addTo(grupoSitios);
+    pt.bindPopup(()=>popup(s)); pt.on('click',()=>seleccionar(s.id,false));
+    formas[s.id] = {forma, pt};
   });
 }
-
-
-// ============================== PASO 5 · INTERFAZ ===========================
-var mapa = ui.Map();
-mapa.setOptions('HYBRID');
-mapa.setControlVisibility({layerList: true, zoomControl: true});
-
-var panel = ui.Panel({style: {width: '410px', padding: '8px'}});
-ui.root.clear();
-ui.root.add(ui.SplitPanel(panel, mapa));
-
-var legPanel = ui.Panel({style: {position: 'bottom-left', padding: '6px 8px'}});
-mapa.add(legPanel);
-
-// ---- Encabezado ----
-panel.add(ui.Label('Monitoreo de amenazas al patrimonio arqueológico', {
-  fontWeight: 'bold', fontSize: '20px', color: '#7a1f1f', margin: '4px 0'}));
-panel.add(ui.Label('Dashboard 2 · Alertas sobre áreas arqueológicas protegidas en Colombia', {
-  fontSize: '12px', color: '#555'}));
-panel.add(ui.Label(
-  'EJERCICIO DE CLASE · Ingeniería Computacional\n' +
-  'Especialización en Sistemas de Información Geográfica\n' +
-  'Autor: Andrea Serna', {
-  whiteSpace: 'pre', fontSize: '11px', color: '#333', backgroundColor: '#f3ece2',
-  padding: '6px', margin: '6px 0'}));
-
-// ---- Controles ----
-panel.add(ui.Label('1. Sitio piloto', {fontWeight: 'bold'}));
-var selSitio = ui.Select({items: Object.keys(SITIOS), value: Object.keys(SITIOS)[0],
-                          onChange: actualizar, style: {stretch: 'horizontal'}});
-panel.add(selSitio);
-
-var hoy = new Date();
-var haceN = new Date(hoy.getTime() - CONFIG.DIAS_VENTANA * 86400000);
-panel.add(ui.Label('2. Ventana de análisis (AAAA-MM-DD)', {fontWeight: 'bold'}));
-var tIni = ui.Textbox({value: fmtFecha(haceN), style: {width: '120px'}});
-var tFin = ui.Textbox({value: fmtFecha(hoy),   style: {width: '120px'}});
-panel.add(ui.Panel([ui.Label('Inicio'), tIni, ui.Label('Fin'), tFin],
-                   ui.Panel.Layout.flow('horizontal')));
-
-panel.add(ui.Label('3. Parámetros', {fontWeight: 'bold'}));
-var sUmbral = ui.Slider({min: 1, max: 6, value: 3, step: 0.5, style: {stretch: 'horizontal'}});
-var sAnio   = ui.Slider({min: 2015, max: 2023, value: 2020, step: 1, style: {stretch: 'horizontal'}});
-var sTC     = ui.Slider({min: 10, max: 90, value: 30, step: 5, style: {stretch: 'horizontal'}});
-panel.add(ui.Label('Umbral de caída Sentinel-1 VH (dB)'));  panel.add(sUmbral);
-panel.add(ui.Label('Pérdida Hansen desde el año'));          panel.add(sAnio);
-panel.add(ui.Label('Cobertura arbórea mínima 2000 (%)'));    panel.add(sTC);
-
-panel.add(ui.Label('4. Capas visibles', {fontWeight: 'bold'}));
-var chkIdx    = ui.Checkbox('Índice de presión (0–5)', true);
-var chkHansen = ui.Checkbox('Deforestación Hansen (año de pérdida)', false);
-var chkRadd   = ui.Checkbox('Alertas RADD (radar)', true);
-var chkGlad   = ui.Checkbox('Alertas GLAD-L (Landsat)', false);
-var chkS1     = ui.Checkbox('Cambio Sentinel-1 VH (dB)', false);
-var chkMB     = ui.Checkbox('MapBiomas Colombia (cobertura)', false);
-var chkVias   = ui.Checkbox('Vías (GRIP4, requiere asset)', false);
-[chkIdx, chkHansen, chkRadd, chkGlad, chkS1, chkMB, chkVias].forEach(function (c) { panel.add(c); });
-
-panel.add(ui.Panel([
-  ui.Button({label: 'Actualizar mapa',   onClick: actualizar}),
-  ui.Button({label: 'Generar reporte',   onClick: generarReporte}),
-  ui.Button({label: 'Comparar sitios',   onClick: compararSitios})
-], ui.Panel.Layout.flow('horizontal')));
-
-var repPanel = ui.Panel({style: {margin: '8px 0 0 0'}});
-panel.add(repPanel);
-
-panel.add(ui.Label(
-  'Fuentes: Hansen/UMD/Google/USGS/NASA · RADD (WUR) · GLAD (UMD) · ' +
-  'Copernicus Sentinel-1 · MapBiomas Colombia · GRIP4.\n' +
-  'Herramienta de alerta temprana: verificar en campo y con imágenes de alta resolución.',
-  {whiteSpace: 'pre-wrap', fontSize: '10px', color: '#777', margin: '10px 0 0 0'}));
-
-// ---- Lectura de parámetros ----
-function params() {
-  return {ini: tIni.getValue(), fin: tFin.getValue(), umbral: sUmbral.getValue(),
-          anio: sAnio.getValue(), tc: sTC.getValue()};
-}
-
-// ---- Leyendas (escalas de color) ----
-function leyendaGradiente(titulo, paleta, txtMin, txtMax) {
-  var barra = ui.Thumbnail({
-    image: ee.Image.pixelLonLat().select('longitude'),
-    params: {bbox: [0, 0, 100, 8], dimensions: '200x16', format: 'png',
-             min: 0, max: 100, palette: paleta},
-    style: {stretch: 'horizontal', margin: '0 4px', maxHeight: '18px'}});
-  return ui.Panel([
-    ui.Label(titulo, {fontWeight: 'bold', fontSize: '11px', margin: '2px 4px'}),
-    barra,
-    ui.Panel([ui.Label(txtMin, {fontSize: '10px', margin: '0 4px'}),
-              ui.Label(txtMax, {fontSize: '10px', margin: '0 4px', textAlign: 'right'})],
-             ui.Panel.Layout.flow('horizontal', true), {stretch: 'horizontal'})
-  ], null, {margin: '4px 0', width: '210px'});
-}
-
-function leyendaCategorias(titulo, nombres, colores) {
-  var filas = [ui.Label(titulo, {fontWeight: 'bold', fontSize: '11px', margin: '2px 4px'})];
-  nombres.forEach(function (n, i) {
-    filas.push(ui.Panel([
-      ui.Label('', {backgroundColor: '#' + colores[i], padding: '7px', margin: '1px 4px'}),
-      ui.Label(n, {fontSize: '10px', margin: '2px 0'})
-    ], ui.Panel.Layout.flow('horizontal')));
+function pintarMapa(){
+  SITIOS().forEach(s=>{
+    const f = formas[s.id]; if(!f) return;
+    f.forma.setStyle(estiloSitio(s));
   });
-  return ui.Panel(filas, null, {margin: '4px 0'});
+}
+function ajustarVista(){
+  const lista = visibles();
+  if (!lista.length) return;
+  const g = L.featureGroup(lista.map(s=>L.circle([s.lat,s.lon],{radius:s.radio*1.5})));
+  mapa.fitBounds(g.getBounds(),{padding:[30,30],maxZoom:lista.length===1?11:9});
+}
+function leyenda(){
+  const u = umbrales(); const f = v => metrica==='ai' ? fmt.format(v) : fmt1.format(v);
+  let html = `<div class="titulo">${AMEN[amen]}<br><span style="font-weight:400">${ETQ[metrica]}</span></div>`;
+  const rangos = [`≤ ${f(u[0])}`, ...u.slice(0,-1).map((v,i)=>`${f(v)} – ${f(u[i+1])}`), `> ${f(u[u.length-1])}`];
+  rangos.forEach((t,i)=> html += `<div><span class="cuadro" style="background:${COLORES[i]}"></span>${t}</div>`);
+  $('leyenda').innerHTML = html;
+}
+function seleccionar(id, centrar){
+  seleccion = (seleccion===id && !centrar) ? null : id;
+  pintarMapa(); actualizarSeries(); marcarTabla();
+  if (seleccion && centrar){
+    const s = SITIOS().find(x=>x.id===id);
+    mapa.setView([s.lat,s.lon],10.5);
+    formas[id].forma.openPopup([s.lat,s.lon]);
+    const tr = document.querySelector(`#tabla tbody tr[data-id="${id}"]`); if(tr) tr.scrollIntoView({block:'nearest'});
+  }
 }
 
-// ---- Actualizar el mapa ----
-function actualizar() {
-  var p = params();
-  var f = feat(selSitio.getValue());
-  var geom = f.geometry();
-  var L = capas(geom, p);
+/* ===================== GRÁFICOS ===================== */
+Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+Chart.defaults.font.size = 13; Chart.defaults.color = '#5E4F44';
+const ejeX = () => ({grid:{color:'#EFE6D9'}, ticks:{callback:v=>metrica==='ai'?fmt.format(v):v+' %'}});
 
-  mapa.layers().reset();
-  legPanel.clear();
-  mapa.centerObject(geom, SITIOS[selSitio.getValue()].radio > 15000 ? 10 : 12);
+const gSitios = new Chart($('gSitios'),{type:'bar',
+  data:{labels:[],datasets:[{data:[],backgroundColor:[],borderRadius:2,barPercentage:.8}]},
+  options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,animation:{duration:300},
+    plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+fmtMet(c.parsed.x)}}},
+    scales:{x:ejeX(),y:{grid:{display:false},ticks:{autoSkip:false}}},
+    onClick:(e,els)=>{ if(els.length) seleccionar(gSitios._ids[els[0].index],true); }}});
 
-  // Cobertura MapBiomas (remapeada a 1..n para usar paleta propia)
-  var mbVis = L.mb.remap(MB.ids, ee.List.sequence(1, MB.ids.length));
-  mapa.addLayer(mbVis.clip(geom), {min: 1, max: MB.ids.length, palette: MB.colores},
-                'MapBiomas ' + CONFIG.MB_ANIO, chkMB.getValue());
+const gComp = new Chart($('gComp'),{type:'bar',
+  data:{labels:[],datasets:Object.keys(COL_AMEN).map(k=>({label:AMEN[k],data:[],backgroundColor:COL_AMEN[k],stack:'a'}))},
+  options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,animation:{duration:300},
+    plugins:{legend:{position:'bottom',labels:{boxWidth:12}},tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${fmt.format(c.parsed.x)} ha`}}},
+    scales:{x:{stacked:true,grid:{color:'#EFE6D9'}},y:{stacked:true,grid:{display:false},ticks:{autoSkip:false}}}}});
 
-  mapa.addLayer(L.hansen.multiply(lossyear.updateMask(L.hansen)).add(0).clip(geom),
-                {min: 1, max: 23, palette: PAL.hansen}, 'Hansen: año de pérdida', chkHansen.getValue());
-  // Nota: lossyear.updateMask(...) conserva el valor del año (1–23) para colorear.
+const gLoss = new Chart($('gLoss'),{type:'bar',
+  data:{labels:ANIOS,datasets:[{data:[],backgroundColor:ANIOS.map((_,i)=>PAL_HANSEN[Math.round(i/(ANIOS.length-1)*(PAL_HANSEN.length-1))])}]},
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:1.9,animation:{duration:300},plugins:{legend:{display:false}},
+    scales:{y:{title:{display:true,text:'ha'},grid:{color:'#EFE6D9'}},x:{grid:{display:false}}}}});
 
-  mapa.addLayer(radd.select('Date').updateMask(L.radd).clip(geom),
-                {min: codigoYYDOY(p.ini), max: codigoYYDOY(p.fin), palette: PAL.radd},
-                'Alertas RADD', chkRadd.getValue());
-  mapa.addLayer(gladCapa(p).clip(geom), {palette: PAL.glad}, 'Alertas GLAD-L', chkGlad.getValue());
-  mapa.addLayer(L.dif.clip(geom), {min: -5, max: 5, palette: PAL.s1},
-                'Cambio S1 VH (dB)', chkS1.getValue());
+const gAlert = new Chart($('gAlert'),{type:'line',
+  data:{labels:[],datasets:[{data:[],borderColor:'#CC4C02',backgroundColor:'rgba(254,153,41,.25)',fill:true,tension:.3,pointRadius:3}]},
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:1.9,animation:{duration:300},plugins:{legend:{display:false}},
+    scales:{y:{title:{display:true,text:'ha / mes'},grid:{color:'#EFE6D9'},beginAtZero:true},x:{grid:{display:false}}}}});
 
-  var vias = ee.FeatureCollection(CONFIG.VIAS).filterBounds(geom);
-  mapa.addLayer(ee.Image().byte().paint({featureCollection: vias, color: 1, width: 1}).clip(geom),
-                {palette: PAL.vias}, 'Vías (GRIP4)', chkVias.getValue());
+function actualizarGraficos(){
+  const lista = visibles().sort((a,b)=>val(b)-val(a));
+  gSitios._ids = lista.map(s=>s.id);
+  gSitios.data.labels = lista.map(s=>s.nombre);
+  gSitios.data.datasets[0].data = lista.map(s=>+val(s).toFixed(2));
+  gSitios.data.datasets[0].backgroundColor = lista.map(s=>{const c=color(val(s)); return c===COLORES[0]?COLORES[1]:c;});
+  gSitios.options.scales.x = ejeX(); gSitios.update();
+  $('gSitios').parentElement.style.height = (Math.max(lista.length,5)*30+50)+'px';
+  $('subSitios').textContent = `${AMEN[amen]} — ${ETQ[metrica].toLowerCase()}. Haga clic en una barra para ubicar el sitio en el mapa.`;
 
-  mapa.addLayer(L.idx.updateMask(L.idx.gte(1)).clip(geom),
-                {min: 1, max: 5, palette: PAL.indice}, 'Índice de presión (1–5)', chkIdx.getValue());
-
-  // Contorno del sitio
-  mapa.addLayer(ee.Image().byte().paint({featureCollection: ee.FeatureCollection([f]),
-                color: 1, width: 2}), {palette: '00FFFF'}, 'Área de análisis', true);
-
-  // Leyendas de las capas activas
-  if (chkIdx.getValue())    { legPanel.add(leyendaGradiente('Índice de presión (nº amenazas)', PAL.indice, '1', '5')); }
-  if (chkHansen.getValue()) { legPanel.add(leyendaGradiente('Año de pérdida (Hansen)', PAL.hansen, '2001', '2023')); }
-  if (chkRadd.getValue())   { legPanel.add(leyendaGradiente('Fecha de alerta RADD', PAL.radd, p.ini, p.fin)); }
-  if (chkS1.getValue())     { legPanel.add(leyendaGradiente('Cambio S1 VH (dB)', PAL.s1, '-5 (pérdida)', '+5')); }
-  if (chkMB.getValue())     { legPanel.add(leyendaCategorias('MapBiomas ' + CONFIG.MB_ANIO, MB.nombres, MB.colores)); }
+  const comp = visibles().sort((a,b)=>b.idx1-a.idx1);
+  gComp.data.labels = comp.map(s=>s.nombre);
+  Object.keys(COL_AMEN).forEach((k,i)=>{ gComp.data.datasets[i].data = comp.map(s=>s[k]); });
+  gComp.update();
+  $('gComp').parentElement.style.height = (Math.max(comp.length,5)*30+90)+'px';
+  actualizarSeries();
+}
+function actualizarSeries(){
+  const lista = seleccion ? SITIOS().filter(s=>s.id===seleccion) : visibles();
+  const nombre = seleccion ? lista[0].nombre : (depto ? depto : 'todos los sitios');
+  gLoss.data.datasets[0].data = ANIOS.map((_,i)=>lista.reduce((a,s)=>a+s.perdida[i],0));
+  gLoss.update();
+  $('subLoss').textContent = `Suma anual de pérdida de cobertura arbórea en ${nombre}.`;
+  const meses=[]; const fin=new Date(DATOS.periodo.fin+'T00:00:00');
+  for(let i=11;i>=0;i--){ const d=new Date(fin.getFullYear(),fin.getMonth()-i,1);
+    meses.push(d.toLocaleDateString('es-CO',{month:'short',year:'2-digit'})); }
+  gAlert.data.labels = meses;
+  gAlert.data.datasets[0].data = meses.map((_,i)=>lista.reduce((a,s)=>a+s.alertas[i],0));
+  gAlert.update();
+  $('subAlert').textContent = `Alertas de deforestación detectadas con radar en ${nombre}.`;
 }
 
-// ---- Reporte del sitio seleccionado ----
-function generarReporte() {
-  var p = params();
-  var nombre = selSitio.getValue();
-  repPanel.clear();
-  repPanel.add(ui.Label('Calculando reporte… (puede tardar unos segundos)', {color: '#888'}));
+/* ===================== KPIs ===================== */
+function actualizarKpis(){
+  const f = visibles();
+  const ai = f.reduce((a,s)=>a+s.idx1,0), tot = f.reduce((a,s)=>a+s.total,0);
+  const top = f.slice().sort((a,b)=>val(b)-val(a))[0];
+  $('kN').textContent = f.length;
+  $('kAi').innerHTML = fmt.format(ai)+'<small>ha</small>';
+  $('kP').innerHTML = (tot?fmt2.format(100*ai/tot):'0')+'<small>%</small>';
+  $('kAlto').textContent = f.filter(s=>nivel(s).txt==='ALTO').length;
+  $('kTop').textContent = top ? top.nombre : '—';
+  $('kTopEt').textContent = top ? `Sitio más afectado · ${fmtMet(val(top))}` : 'Sitio más afectado';
+}
 
-  statsSitio(feat(nombre), p).toDictionary().evaluate(function (d) {
-    repPanel.clear();
-    if (!d || !d.total) {
-      repPanel.add(ui.Label('No se pudo calcular el reporte. Revise fechas y assets.', {color: 'red'}));
-      return;
+/* ===================== TABLA ===================== */
+const tbody = document.querySelector('#tabla tbody');
+function acc(s,k){
+  if (k==='pidx1') return pctDe(s,'idx1');
+  if (k==='nivel') return pctDe(s,'idx2');
+  return s[k];
+}
+function actualizarTabla(){
+  let f = visibles();
+  if (filtro){ const q=normal(filtro); f = f.filter(s=>normal(s.nombre).includes(q)||normal(s.depto).includes(q)); }
+  f.sort((a,b)=>{ const x=acc(a,orden.k), y=acc(b,orden.k); const c = typeof x==='string'?x.localeCompare(y,'es'):x-y; return orden.asc?c:-c; });
+  tbody.innerHTML = f.map((s,i)=>{ const n=nivel(s); return `<tr data-id="${s.id}" class="${seleccion===s.id?'activa':''}">
+    <td class="pos">${i+1}</td><td>${s.nombre}</td><td>${s.depto}</td>
+    <td><span class="sem" style="background:${n.color}">${n.txt}</span></td>
+    <td class="num">${fmt.format(s.total)}</td><td class="num">${fmt.format(s.idx1)}</td><td class="num">${fmt2.format(pctDe(s,'idx1'))}</td>
+    <td class="num">${fmt.format(s.hansen)}</td><td class="num">${fmt.format(s.radd)}</td><td class="num">${fmt.format(s.s1)}</td>
+    <td class="num">${fmt.format(s.mineria)}</td><td class="num">${fmt.format(s.urbano)}</td></tr>`; }).join('');
+  $('subTabla').textContent = `${f.length} sitio${f.length===1?'':'s'}${depto?' en '+depto:''}. Ordene por cualquier columna; haga clic en una fila para centrarla en el mapa.`;
+}
+function marcarTabla(){ document.querySelectorAll('#tabla tbody tr').forEach(tr=>tr.classList.toggle('activa',tr.dataset.id===seleccion)); }
+document.querySelectorAll('#tabla th[data-k]').forEach(th=>th.addEventListener('click',()=>{
+  const k = th.dataset.k; if (k==='pos') return;
+  if (orden.k===k) orden.asc=!orden.asc; else orden={k, asc:(k==='nombre'||k==='depto')};
+  document.querySelectorAll('#tabla th').forEach(t=>t.setAttribute('aria-sort', t.dataset.k===orden.k?(orden.asc?'ascending':'descending'):'none'));
+  actualizarTabla();
+}));
+tbody.addEventListener('click',e=>{ const tr=e.target.closest('tr'); if(tr) seleccionar(tr.dataset.id,true); });
+$('buscar').addEventListener('input',e=>{ filtro=e.target.value.trim(); actualizarTabla(); });
+
+/* ===================== CONTROLES ===================== */
+function poblarSelectores(){
+  $('selAmen').innerHTML = Object.entries(AMEN).map(([k,v])=>`<option value="${k}" ${k===amen?'selected':''}>${v}</option>`).join('');
+  const ds = [...new Set(SITIOS().map(s=>s.depto))].sort((a,b)=>a.localeCompare(b,'es'));
+  $('selDepto').innerHTML = '<option value="">Todos los departamentos</option>' + ds.map(d=>`<option value="${d}" ${d===depto?'selected':''}>${d}</option>`).join('');
+}
+function refrescar(){
+  leyenda(); pintarMapa(); actualizarKpis(); actualizarGraficos(); actualizarTabla();
+  $('subMapa').textContent = `${AMEN[amen]} por sitio (${ETQ[metrica].toLowerCase()}), clasificada en seis rangos${depto?'; se resalta '+depto:''}. Haga clic en un sitio para ver sus cifras.`;
+  $('banner').style.display = 'block';
+  $('banner').innerHTML = DATOS.ejemplo
+    ? '<b>DATOS DE EJEMPLO:</b> las cifras son ilustrativas para el ejercicio y no corresponden a mediciones reales. Cargue los resultados exportados desde Earth Engine para ver datos reales.'
+    : `<b>Periodo de análisis:</b> ${DATOS.periodo.ini} → ${DATOS.periodo.fin}`;
+}
+document.querySelectorAll('.conmutador button').forEach(b=>b.addEventListener('click',()=>{
+  metrica=b.dataset.metrica;
+  document.querySelectorAll('.conmutador button').forEach(x=>x.setAttribute('aria-pressed',x===b));
+  refrescar();
+}));
+$('selAmen').addEventListener('change',e=>{ amen=e.target.value; refrescar(); });
+$('selDepto').addEventListener('change',e=>{ depto=e.target.value; seleccion=null; ajustarVista(); refrescar(); });
+
+/* Carga de datos exportados desde Earth Engine */
+$('fJson').addEventListener('change',e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{ try{
+      const d=JSON.parse(r.result); if(!d.sitios||!d.sitios.length) throw new Error('El archivo no contiene "sitios"');
+      DATOS=Object.assign({ejemplo:false,periodo:DATOS.periodo},d); iniciar();
+    }catch(err){ alert('Archivo no válido: '+err.message); } };
+  r.readAsText(f);
+});
+
+function iniciar(){
+  prepararDatos(); seleccion=null; depto='';
+  poblarSelectores(); construirMapa(); ajustarVista(); refrescar();
+}
+
+/* ===================== PDF ===================== */
+const btnPdf = $('btnPdf');
+btnPdf.addEventListener('click', async ()=>{
+  if (!window.html2canvas || !window.jspdf){ window.print(); return; }
+  btnPdf.disabled=true; const txt=btnPdf.textContent; btnPdf.textContent='Generando PDF…';
+  const ocultar=document.querySelectorAll('.leaflet-control-zoom,.leaflet-control-layers,.controles');
+  ocultar.forEach(e=>e.style.visibility='hidden');
+  try{
+    const ancho=document.documentElement.scrollWidth;
+    const lienzo=await html2canvas(document.body,{scale:2,useCORS:true,allowTaint:false,backgroundColor:'#F7F2EA',windowWidth:ancho,scrollX:0,scrollY:-window.scrollY,
+      ignoreElements:el=>el.classList&&(el.classList.contains('leaflet-control-zoom')||el.classList.contains('leaflet-control-layers')||el.classList.contains('controles'))});
+    const {jsPDF}=window.jspdf;
+    const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(), m=8;
+    const anchoImg=pw-2*m, escala=anchoImg/lienzo.width, altoPag=(ph-2*m)/escala;
+    let y=0,pag=0;
+    while(y<lienzo.height){
+      const h=Math.min(altoPag,lienzo.height-y);
+      const c=document.createElement('canvas'); c.width=lienzo.width; c.height=h;
+      c.getContext('2d').drawImage(lienzo,0,y,lienzo.width,h,0,0,lienzo.width,h);
+      if(pag>0) pdf.addPage();
+      pdf.addImage(c.toDataURL('image/jpeg',0.92),'JPEG',m,m,anchoImg,h*escala);
+      pdf.setFontSize(8); pdf.setTextColor(120);
+      pdf.text(`Amenazas al patrimonio arqueológico · ${AMEN[amen]} · ${ETQ[metrica]}${depto?' · '+depto:''} · Autor: Andrea Serna · pág. ${pag+1}`,m,ph-3);
+      y+=h; pag++;
     }
-    var nv = nivelAlerta(d);
-    function fila(txt, ha) {
-      var pct = (100 * ha / d.total).toFixed(2);
-      return ui.Label(txt + ':  ' + ha.toFixed(1) + ' ha  (' + pct + ' %)', {fontSize: '12px', margin: '1px 0'});
-    }
-    repPanel.add(ui.Label('REPORTE DE ALERTA · ' + nombre, {fontWeight: 'bold', fontSize: '14px'}));
-    repPanel.add(ui.Label('Periodo: ' + p.ini + ' → ' + p.fin + '   |   Generado: ' + fmtFecha(new Date()),
-                          {fontSize: '11px', color: '#555'}));
-    repPanel.add(ui.Label('NIVEL DE ALERTA: ' + nv.txt, {
-      fontWeight: 'bold', color: 'white', backgroundColor: nv.color, padding: '6px', margin: '6px 0'}));
-    repPanel.add(ui.Label('Área analizada: ' + d.total.toFixed(0) + ' ha', {fontSize: '12px'}));
-    repPanel.add(fila('Pérdida Hansen desde ' + p.anio, d.hansen));
-    repPanel.add(fila('Alertas RADD en la ventana', d.radd));
-    repPanel.add(fila('Caída radar Sentinel-1', d.s1));
-    repPanel.add(fila('Minería (MapBiomas ' + CONFIG.MB_ANIO + ')', d.mineria));
-    repPanel.add(fila('Infraestructura urbana (MapBiomas)', d.urbano));
-    repPanel.add(fila('Área con ≥1 amenaza', d.idx1));
-    repPanel.add(fila('Área con ≥2 amenazas coincidentes', d.idx2));
-    var geom = feat(nombre).geometry();
-    repPanel.add(graficoHansen(geom, p));
-    repPanel.add(graficoS1(geom, p));
-  });
-}
+    pdf.save(`Dashboard_Amenazas_Patrimonio_${new Date().toISOString().slice(0,10)}.pdf`);
+  }catch(err){
+    console.error(err);
+    alert('No fue posible generar el PDF automáticamente; se abrirá el cuadro de impresión, donde puede elegir "Guardar como PDF".');
+    window.print();
+  }finally{
+    ocultar.forEach(e=>e.style.visibility='');
+    btnPdf.disabled=false; btnPdf.textContent=txt;
+  }
+});
 
-// ---- Comparación de los 4 sitios piloto ----
-function compararSitios() {
-  var p = params();
-  repPanel.clear();
-  repPanel.add(ui.Label('Comparando sitios piloto… (puede tardar 1–3 min)', {color: '#888'}));
-  var fc = ee.FeatureCollection(Object.keys(SITIOS).map(function (n) { return statsSitio(feat(n), p); }));
-  fc.evaluate(function (r) {
-    repPanel.clear();
-    if (!r || !r.features) {
-      repPanel.add(ui.Label('No se pudo completar la comparación.', {color: 'red'}));
-      return;
-    }
-    repPanel.add(ui.Label('COMPARACIÓN DE SITIOS · ' + p.ini + ' → ' + p.fin, {fontWeight: 'bold'}));
-    r.features.forEach(function (ft) {
-      var d = ft.properties;
-      var nv = nivelAlerta(d);
-      repPanel.add(ui.Panel([
-        ui.Label(nv.txt, {backgroundColor: nv.color, color: 'white', fontWeight: 'bold',
-                          padding: '3px', width: '52px', textAlign: 'center'}),
-        ui.Label(d.sitio + ' · ≥1: ' + (100 * d.idx1 / d.total).toFixed(1) + ' %  ·  ≥2: ' +
-                 (100 * d.idx2 / d.total).toFixed(1) + ' %', {fontSize: '11px'})
-      ], ui.Panel.Layout.flow('horizontal')));
-    });
-  });
-}
-
-// Inicio
-actualizar();
-
-
-/*****************************************************************************
- *  EJERCICIOS PROPUESTOS PARA LA CLASE
- *  1. Cambie el umbral de Sentinel-1 (1 → 6 dB) y observe cómo varía el
- *     área alertada. ¿Qué compromiso hay entre falsas alarmas y omisiones?
- *  2. Reemplace los círculos por polígonos oficiales (Asset) de cada parque
- *     y añada una zona de amortiguación de 5 km.
- *  3. Agregue la distancia a vías (ee.Image.distance) como quinta amenaza
- *     y reescriba el índice de presión con pesos distintos por amenaza.
- *  4. Compare RADD vs GLAD-L: ¿cuál detecta antes los cambios en Chiribiquete?
- *  5. Programe la exportación mensual con exportarCSV() y construya una
- *     tabla histórica para entregar como reporte institucional.
- *  6. Publique la App: Apps → New App → seleccione este script.
- *****************************************************************************/
+/* ===================== INICIO ===================== */
+if (GEE_APP_URL){ $('geeCard').style.display='block'; $('geeFrame').src=GEE_APP_URL; }
+// Si existe datos.json junto a este archivo (GitHub Pages), se usa automáticamente
+fetch('datos.json').then(r=>r.ok?r.json():Promise.reject())
+  .then(d=>{ if(d.sitios&&d.sitios.length) DATOS=Object.assign({ejemplo:false,periodo:DATOS.periodo},d); })
+  .catch(()=>{}).finally(iniciar);
+</script>
+</body>
+</html>
